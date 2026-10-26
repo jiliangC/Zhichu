@@ -344,11 +344,6 @@ final class ModelDownload {
         }
     }
 
-    /// Where the two files download from (the pinned revision), one a line: to fetch them on another network.
-    static var links: String {
-        ModelFiles.all.map(\.url.absoluteString).joined(separator: "\n")
-    }
-
     // MARK: Disk
 
     private func partialBytes(of file: ModelFiles.File) -> Int64 {

@@ -638,23 +638,6 @@ private struct StorageSettings: View {
                 }
             } header: {
                 Text("模型")
-            } footer: {
-                if !state.model.download.isReady {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("如果无法连接 Hugging Face，可从其他网络下载两个模型文件，"
-                             + "点击“导入模型文件…”选择文件，知处会在使用前校验完整性。")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                        Button("复制下载链接") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(ModelDownload.links, forType: .string)
-                        }
-                        .controlSize(.small)
-                        .help("复制两个模型文件的下载地址")
-                    }
-                }
             }
             Section("索引") {
                 LabeledContent("磁盘占用", value: bytes(state.indexSize))
