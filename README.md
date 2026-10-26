@@ -17,7 +17,7 @@
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8B78CE?style=flat-square" alt="MIT License"></a>
 </p>
 
-<p align="center"><img src="docs/media/demo.gif" width="960" alt="知处使用演示：按画面搜索图片、查找截图文字、定位 PDF 命中页。演示使用虚构资料。"></p>
+<p align="center"><img src="docs/media/demo.gif?v=776b67ae18" width="960" alt="知处实际操作录屏：搜索资料、定位命中内容并预览文件。"></p>
 
 文件名想不起来，但你还记得它说过什么。知处把图片、截图、PDF、文档、音视频和主动开启的本地邮件放进同一个搜索入口，结合关键词与语义匹配，帮你从内容找回资料。
 
