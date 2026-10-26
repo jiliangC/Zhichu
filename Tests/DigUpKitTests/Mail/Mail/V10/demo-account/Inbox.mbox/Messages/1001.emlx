@@ -1,0 +1,23 @@
+402
+Subject: =?utf-8?b?56ys5Zub5a2j5bqm6YeH6LSt5oql5Lu356Gu6K6k?=
+From: =?utf-8?b?546L6Z2Z?= <wangjing@example.com>
+To: team@example.com
+Date: Sat, 24 Oct 2026 16:40:00 +0800
+Message-ID: <quote-20261024@example.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: base64
+
+5oql5Lu35bey56Gu6K6k77yM6K+35oyJ57qm5a6a5YeG5aSH5ZCI5ZCM5LiO5LuY5qy+6LWE5paZ
+44CC
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>flags</key>
+	<integer>1</integer>
+	<key>subject</key>
+	<string>元数据不应混入正文</string>
+</dict>
+</plist>

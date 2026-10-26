@@ -1,0 +1,57 @@
+# Build output
+.build/
+.swiftpm/
+build.noindex/
+/Vendor/
+
+# Dev runs (scripts/dev-run.sh): their indexes, models and settings
+.dev/
+
+# Python: the reference worker's environment
+worker/.venv/
+__pycache__/
+*.pyc
+
+# Your signing identity for local builds (see build.sh)
+.sign-id
+
+# Evals that name your own files
+evals/*.local.json
+
+.DS_Store
+
+# The Tauri shell (shell/): Cargo builds and the schemas tauri-build writes
+shell/src-tauri/target/
+shell/src-tauri/gen/
+# What scripts/package-*.sh gather for the packages
+shell/src-tauri/helper/
+shell/src-tauri/THIRD-PARTY-NOTICES.txt
+
+# Brand exploration, generated reports and scratch work
+/outputs/
+/work/
+
+# Local development notes and publication working files
+/docs/*
+!/docs/media/
+/Resources/Brand/README.md
+/Resources/AppIcon/README.md
+/*.local.*
+/.env
+/.env.*
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.keychain-db
+*.xcuserstate
+*.log
+
+# Legacy platform packaging and update feeds; this repository ships the native Mac app
+/shell/
+/updates/
+/appcast.xml
+/scripts/package-linux.sh
+/scripts/package-windows.sh
+/scripts/check-linux-package.sh
+/scripts/check-windows-package.sh

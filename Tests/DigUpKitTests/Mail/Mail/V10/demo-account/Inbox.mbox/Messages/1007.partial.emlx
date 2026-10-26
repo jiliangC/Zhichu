@@ -1,0 +1,37 @@
+835
+Subject: =?utf-8?b?56ys5Zub5a2j5bqm6YeH6LSt5oql5Lu35LiO5LuY5qy+57qm5a6a77yI?=
+ =?utf-8?b?5YiG56a76ZmE5Lu277yJ?=
+From: =?utf-8?b?546L6Z2Z?= <wangjing@example.com>
+To: team@example.com
+Date: Sat, 24 Oct 2026 16:40:00 +0800
+Message-ID: <partial@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============1703634223857936051=="
+
+--===============1703634223857936051==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+详细金额与交付安排请查看本地已下载附件。
+
+--===============1703634223857936051==
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+ filename*=utf-8''%E6%8A%A5%E4%BB%B7%E5%8D%95.pdf
+MIME-Version: 1.0
+X-Apple-Content-Length: 24368
+
+
+--===============1703634223857936051==--
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>flags</key>
+	<integer>1</integer>
+	<key>subject</key>
+	<string>元数据不应混入正文</string>
+</dict>
+</plist>

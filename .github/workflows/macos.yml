@@ -1,0 +1,18 @@
+name: Zhichu macOS
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build native app
+        run: ./build.sh
+      - name: Test
+        run: swift test
+        # Model reference tests skip when weights are absent; local release checks run them with weights.

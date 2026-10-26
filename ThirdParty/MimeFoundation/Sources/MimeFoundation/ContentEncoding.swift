@@ -1,0 +1,77 @@
+//
+// Author: Jeffrey Stedfast <jestedfa@microsoft.com>
+//
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+
+//
+// ContentEncoding.swift
+//
+// Ported from MimeKit (C#) to Swift.
+//
+
+/// An enumeration of all supported content transfer encodings.
+///
+/// Some older mail software is unable to properly deal with data outside the ASCII range,
+/// so it is sometimes necessary to encode the content of MIME entities.
+///
+/// - SeeAlso: ``MimePart/contentTransferEncoding``
+public enum ContentEncoding: String, CaseIterable, Sendable {
+    /// The default encoding (aka no encoding at all).
+    case `default`
+
+    /// The 7bit content transfer encoding.
+    ///
+    /// This encoding should be restricted to textual content in the US-ASCII range.
+    case sevenBit
+
+    /// The 8bit content transfer encoding.
+    ///
+    /// This encoding should be restricted to textual content outside the US-ASCII range
+    /// but may not be supported by all transport services such as older SMTP servers
+    /// that do not support the 8BITMIME extension.
+    case eightBit
+
+    /// The binary content transfer encoding.
+    ///
+    /// This encoding is simply unencoded binary data. Typically not supported by
+    /// standard message transport services such as SMTP.
+    case binary
+
+    /// The base64 content transfer encoding.
+    ///
+    /// This encoding is typically used for encoding binary data or textual content
+    /// in a largely 8bit charset encoding and is supported by all message transport services.
+    case base64
+
+    /// The quoted-printable content transfer encoding.
+    ///
+    /// This encoding is used for textual content that is in a charset that has a
+    /// minority of characters outside the US-ASCII range (such as ISO-8859-1 and
+    /// other single-byte charset encodings) and is supported by all message transport services.
+    case quotedPrintable
+
+    /// The uuencode content transfer encoding.
+    ///
+    /// This is an obsolete encoding meant for encoding binary data and has largely
+    /// been superseded by ``base64``.
+    case uuEncode
+}

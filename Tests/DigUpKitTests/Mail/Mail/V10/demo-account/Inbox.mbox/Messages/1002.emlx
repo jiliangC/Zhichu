@@ -1,0 +1,22 @@
+359
+Subject: =?gb18030?b?yeixuNHpytWwssXF?=
+From: =?gb18030?b?zfW+sg==?= <wangjing@example.com>
+To: team@example.com
+Date: Sat, 24 Oct 2026 16:40:00 +0800
+Message-ID: <quote-20261024@example.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="gb18030"
+Content-Transfer-Encoding: base64
+
+z+7Ev9HpytXXysHPx+vT2tTCtdfHsMzhvbujrLfR08PS0brLttShow==
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>flags</key>
+	<integer>1</integer>
+	<key>subject</key>
+	<string>元数据不应混入正文</string>
+</dict>
+</plist>

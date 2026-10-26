@@ -1,0 +1,35 @@
+665
+Subject: =?utf-8?b?6YeH6LSt6aKE566X56Gu6K6k?=
+From: =?utf-8?b?546L6Z2Z?= <wangjing@example.com>
+To: team@example.com
+Date: Sat, 24 Oct 2026 16:40:00 +0800
+Message-ID: <budget@example.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============0584208790266170133=="
+
+--===============0584208790266170133==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+采购预算已确认。
+
+--===============0584208790266170133==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+<p>采购预算已确认。</p>
+
+--===============0584208790266170133==--
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>flags</key>
+	<integer>1</integer>
+	<key>subject</key>
+	<string>元数据不应混入正文</string>
+</dict>
+</plist>

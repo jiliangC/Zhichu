@@ -1,0 +1,1216 @@
+import DigUpKit
+import Foundation
+
+/// What the menubar shows about the index.
+nonisolated struct EngineStatus: Sendable, Equatable {
+    enum Activity: Sendable, Equatable {
+        case starting
+        case idle
+        case syncing
+        case indexing(done: Int, total: Int)
+        /// The rest of long PDFs and documents (`Indexer.finishLongFiles`): `done` of the `total` pages and chunks this
+        /// pass set out to read, `files` long files still unfinished.
+        case finishing(done: Int, total: Int, files: Int)
+        case failed(String)
+    }
+
+    /// The query encoder: a text-only worker process started when the panel opens.
+    enum Encoder: Sendable, Equatable {
+        case stopped
+        case starting
+        case ready
+        case unavailable
+    }
+
+    var activity = Activity.starting
+    var encoder = Encoder.stopped
+    var sources: [IndexSource: IndexSourceCounts] = [:]
+    var activeSource: IndexSource?
+    var files = 0        // in the index, any state
+    var searchable = 0   // done or partial
+    var pending = 0      // waiting to be embedded
+    var unfinished = 0   // long files with pages or chunks still to read (the backfill's rules hold them up too)
+    var vectors = 0
+    var paused = false
+    /// Hard power gate, separate from manual pause and the first-pass thermal/low-power policy.
+    var powerBlocker: String?
+    var waitingFor: String?   // why the backfill waits ("正在使用电池"), if it does
+    /// Outside the set hours ("仅在指定时段建立索引"): when indexing may run again (`IndexSchedule`).
+    var heldUntil: Date?
+    /// The helper found no model yet (it's downloading): files are found and named, nothing gets embedded.
+    var waitingForModel = false
+    /// Chosen folders that aren't there right now (an unplugged drive): skipped, and their files kept.
+    var missingRoots: [String] = []
+    /// Chosen folders macOS doesn't let 知处 read (Privacy & Security → Files and Folders): skipped, files kept.
+    var unreadableRoots: [String] = []
+    /// What the last sync left out under each chosen folder, by reason (files inside code projects, other types, cloud
+    /// placeholders…), for the Folders tab.
+    var leftOut: [String: [String: Int]] = [:]
+    /// The code index, when code search is on.
+    var code = Code()
+
+    struct Code: Sendable, Equatable {
+        var files = 0
+        var searchable = 0
+        var pending = 0
+        var vectors = 0
+        /// Files being read into the code index (`done` of `total`), or nil.
+        var indexing: Progress?
+        /// Code folders that aren't there right now (an unplugged drive): skipped, and their files kept.
+        var missingRoots: [String] = []
+        /// Code folders macOS doesn't let 知处 read: skipped, files kept.
+        var unreadableRoots: [String] = []
+    }
+
+    struct Progress: Sendable, Equatable {
+        var done: Int
+        var total: Int
+    }
+}
+
+/// The engine host: search, the query encoder, and the indexing helper, all off the main thread.
+///
+/// Indexing runs in a helper process (`Contents/Helpers/digup index-service`) that exits when it's done:
+/// extraction is heavy (Vision OCR alone keeps ~100 MB of models in the process that ran it), and the app has to stay
+/// small while idle. The app watches the folders and tells the helper when to sync, pause, or run the backfill.
+///
+/// Every engine object is confined to one serial queue:
+/// - `indexQueue` (utility QoS) talks to the indexing helper.
+/// - `searchQueue` (user-initiated) owns the `Searcher` and its read connection. SQLite's WAL mode lets it read while
+///   the helper writes, so a search never waits for indexing.
+/// - `encoderQueue` (user-initiated) owns the query encoder, a worker process whose cold start (~0.35 s) must never
+///   hold up keyword results.
+/// The main thread never waits on any of them: work goes in with `async`, results come back through async
+/// functions and `onStatus`.
+///
+/// The folders can change while it runs (`setFolders`): the watcher follows, and the helper restarts with them.
+nonisolated final class Engine: @unchecked Sendable {
+    /// A query's vector and the model that made it (vectors from different models can't be compared).
+    struct QueryVector: Sendable {
+        let values: [Float]
+        let source: String
+    }
+
+    let indexDirectory: URL
+    let modelsDirectory: URL
+    let encoderIdleSeconds: Double
+    private let indexQueue = DispatchQueue(label: "知处.index", qos: .utility)
+    private let searchQueue = DispatchQueue(label: "知处.search", qos: .userInitiated)
+    private let encoderQueue = DispatchQueue(label: "知处.encoder", qos: .userInitiated)
+
+    private let watchQueue = DispatchQueue(label: "知处.watch", qos: .utility)
+
+    // indexQueue only
+    private var helper: Process?
+    private var helperInput: FileHandle?
+    private var helperStarted = Date()
+    private var helperOutput = Data()
+    /// The folders changed while a helper ran: start a new one with them when it's gone.
+    private var restartHelper = false
+    /// A start asked while a helper was still on its way out (Resume right after Pause, the hours beginning): the
+    /// next one starts once it's gone, whatever its exit status.
+    private var startWanted = false
+    /// When the helper's watchdog ended it lately (`stoppedOnFile`).
+    private var watchdogStops: [Date] = []
+    /// The helper's exit status when its watchdog ended it on a file (`digup`'s Watchdog: EX_TEMPFAIL).
+    private static let stoppedOnFile: Int32 = 75
+    /// The next helper drops files under folders that are no longer chosen. At launch too, in case the folders
+    /// changed while a helper had no time to; but an app with no folders at all never empties the index by itself.
+    private var pruneWanted: Bool
+    /// When a sync was last asked for that no helper has started yet; a helper that exits before doing it is
+    /// restarted.
+    private var syncWantedAt: Date?
+    private var lastSearcherRefresh = Date.distantPast
+
+    /// Code search: the code index once code has been quiet this long (a file being edited changes on every save, a
+    /// branch switch or a build changes many at once), or at least this often while it keeps changing.
+    let codeQuietSeconds: Double
+    let codeLongestWait: Double = 600
+
+    // watchQueue only
+    private var watcher: FolderWatcher?
+    /// The chosen folders and the skipped ones as the watcher reports paths (real paths too: /private/var for /var).
+    private var watchedRoots: [String] = []
+    private var watchedSkips: [String] = []
+    private var syncDebounce: DispatchWorkItem?
+    private var codeWatcher: FolderWatcher?
+    private var codeSyncDebounce: DispatchWorkItem?
+    private var codeChangedSince: Date?
+
+    // Any thread, under `lock`
+    private var paused = false
+    private var heldUntil: Date?
+    private var backfillBlocker: String?
+    private var powerBlocker: String?
+    private var roots: [URL]
+    private var fileRoots: [URL]
+    private var mailActive = false
+    private var mailConfigured: Bool
+    private var mailboxes: [String] = []
+    private let mailCache: URL
+    private var excluded: [URL]
+    private var excludedTypes: [String]
+    private var codeRoots: [URL]
+    private var codeExcluded: [URL]
+
+    // indexQueue only
+    /// Code search was turned off: the code index goes once no helper has it open.
+    private var deleteCodeIndex = false
+
+    // searchQueue only
+    private var searcher: Searcher?
+    private var searchStore: IndexStore?
+    private var codeSearcher: Searcher?
+    private var codeStore: IndexStore?
+    private var warnedAboutSource = false
+
+    // encoderQueue only
+    private var encoder: EmbeddingWorker?
+    private var encoderFailed = false
+    private var encoderIdleExit: DispatchWorkItem?
+    private var vectorCache = QueryVectorCache(limit: 256)
+
+    // Any thread, under `lock`: the newest text typed, so embed-ahead requests that went stale are skipped.
+    private var newestTyped: String?
+
+    // Any thread, under `lock`
+    private let lock = NSLock()
+    private var status = EngineStatus()
+    private var statusPostPending = false
+    private let onStatus: @MainActor @Sendable (EngineStatus) -> Void
+
+    /// `backfillBlocker`: why the first full pass has to wait (see `PowerPolicy`), or nil.
+    init(settings: AppSettings, backfillBlocker: String?, heldUntil: Date?, powerBlocker: String? = nil,
+         onStatus: @escaping @MainActor @Sendable (EngineStatus) -> Void) {
+        indexDirectory = settings.indexDirectory
+        modelsDirectory = settings.modelsDirectory
+        encoderIdleSeconds = settings.encoderIdleSeconds
+        roots = settings.roots + (settings.mail.enabled ? [settings.mailCache] : [])
+        fileRoots = settings.roots
+        mailCache = settings.mailCache
+        mailConfigured = settings.mail.enabled
+        excluded = settings.excludedFolders
+        excludedTypes = settings.excludedTypes
+        codeRoots = settings.codeRoots
+        codeExcluded = settings.codeExcluded
+        codeQuietSeconds = settings.codeQuietSeconds
+        pruneWanted = !settings.roots.isEmpty
+        self.backfillBlocker = backfillBlocker
+        self.powerBlocker = powerBlocker
+        status.powerBlocker = powerBlocker
+        self.heldUntil = heldUntil
+        self.onStatus = onStatus
+        status.waitingFor = backfillBlocker
+        status.heldUntil = heldUntil
+    }
+
+    /// A source becomes searchable only after a complete, authorized scan. Filter changes apply immediately.
+    func setMailSource(active: Bool, mailboxes: [String], enabled: Bool) {
+        let changed = lock.withLock { self.mailActive != active || self.mailboxes != mailboxes || self.mailConfigured != enabled }
+        guard changed else { volumesChanged(); return }
+        let current = lock.withLock { () -> ([URL], [URL], [String]) in
+            self.mailActive = active
+            self.mailConfigured = enabled
+            self.mailboxes = mailboxes
+            return (fileRoots, excluded, excludedTypes)
+        }
+        setFolders(roots: current.0, excluded: current.1, excludedTypes: current.2)
+    }
+
+    // MARK: Status
+
+    /// Changes the status and tells the main thread, at most ~10 times a second however often it changes.
+    private func update(_ change: (inout EngineStatus) -> Void) {
+        let post = lock.withLock {
+            change(&status)
+            defer { statusPostPending = true }
+            return !statusPostPending
+        }
+        guard post else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in
+            let latest = lock.withLock {
+                statusPostPending = false
+                return status
+            }
+            MainActor.assumeIsolated { onStatus(latest) }
+        }
+    }
+
+    // MARK: Start
+
+    /// Opens the searcher first (creating the index if it's new), so a search asked for right after launch already
+    /// finds it on its queue; then starts the indexing helper, which syncs with the folders.
+    func start() {
+        searchQueue.async { [self] in
+            guard openSearcher() else {
+                update { $0.activity = .failed("无法打开索引") }
+                return
+            }
+            indexQueue.async { [self] in startHelper() }
+        }
+        watchQueue.async { [self] in
+            startWatching()
+            startWatchingCode()
+        }
+    }
+
+    var folders: (roots: [URL], excluded: [URL]) {
+        lock.withLock { (fileRoots, excluded) }
+    }
+
+    var hasCode: Bool { lock.withLock { !codeRoots.isEmpty } }
+
+    /// New code folders (none: code search off). The helper restarts with them; without any, the code index is deleted
+    /// once the helper is gone.
+    func setCodeFolders(roots: [URL], excluded: [URL]) {
+        let wasOn = lock.withLock { () -> Bool in
+            defer {
+                codeRoots = roots
+                codeExcluded = excluded
+            }
+            return !codeRoots.isEmpty
+        }
+        log("code folders: \(roots.map { tildePath($0.path) })"
+            + (excluded.isEmpty ? "" : " minus \(excluded.map { tildePath($0.path) })"))
+        if roots.isEmpty { update { $0.code = EngineStatus.Code() } }
+        watchQueue.async { [self] in startWatchingCode() }
+        searchQueue.async { [self] in
+            // The code index's own connection closes before the file can go.
+            if roots.isEmpty {
+                codeSearcher = nil
+                codeStore = nil
+            } else if codeSearcher == nil {
+                openCodeSearcher()
+            }
+            indexQueue.async { [self] in
+                pruneWanted = true
+                // Off: the index goes once no helper has it open. On again before that: it stays (and is pruned).
+                deleteCodeIndex = roots.isEmpty && (wasOn || deleteCodeIndex)
+                if helper != nil {
+                    restartHelper = true
+                    stopHelper()
+                } else {
+                    removeCodeIndexIfAsked()
+                    startHelper()
+                }
+            }
+        }
+    }
+
+    /// New folders or exclusions: the watcher follows, and the helper restarts with them once its current batch is
+    /// done. Files under folders that are no longer chosen, or newly excluded, leave the index.
+    func setFolders(roots: [URL], excluded: [URL], excludedTypes: [String]) {
+        lock.withLock {
+            self.fileRoots = roots
+            self.roots = roots + (mailConfigured ? [mailCache] : [])
+            self.excluded = excluded
+            self.excludedTypes = excludedTypes
+        }
+        log("folders: \(roots.map { tildePath($0.path) })" + (excluded.isEmpty ? "" : " minus \(excluded.map { tildePath($0.path) })")
+            + (excludedTypes.isEmpty ? "" : " · skipping .\(excludedTypes.joined(separator: ", ."))"))
+        update {
+            $0.missingRoots = []
+            $0.unreadableRoots = []
+            if roots.isEmpty { $0.activity = .idle }
+        }
+        watchQueue.async { [self] in startWatching() }
+        indexQueue.async { [self] in
+            pruneWanted = true
+            if helper != nil {
+                restartHelper = true
+                stopHelper()
+            } else {
+                startHelper()
+            }
+        }
+    }
+
+    /// The model has finished downloading: index what's waiting, and meaning search may start.
+    func modelArrived() {
+        update { $0.waitingForModel = false }
+        encoderQueue.async { [self] in encoderFailed = false }
+        indexQueue.async { [self] in requestSync() }
+    }
+
+    /// A drive was connected or ejected: a missing folder may be back (or gone).
+    func volumesChanged() {
+        watchQueue.async { [self] in
+            startWatching()
+            startWatchingCode()
+        }
+        indexQueue.async { [self] in
+            requestSync()
+            if hasCode { send("sync code") }
+        }
+    }
+
+    private func openSearcher() -> Bool {
+        let started = Date()
+        do {
+            // Keyword search only until the panel opens: the vectors load then, and leave with the query encoder.
+            let store = try IndexStore(directory: indexDirectory)
+            let searcher = try Searcher(store: store, loadVectors: false)
+            self.searcher = searcher
+            searchStore = store
+            if let counts = try? store.counts() { apply(counts) }
+            if let sources = try? store.sourceCounts() { update { $0.sources = sources } }
+            log("engine: searcher ready in \(ms(since: started))")
+            if hasCode { openCodeSearcher() }
+            returnFreedMemory()
+            return true
+        } catch {
+            log("can't open the index at \(indexDirectory.path): \(error)")
+            return false
+        }
+    }
+
+    /// The code index's searcher (searchQueue), when code search is on; its vectors load with the first search of code.
+    private func openCodeSearcher() {
+        do {
+            let store = try IndexStore(directory: indexDirectory, file: IndexStore.codeFile)
+            codeSearcher = try Searcher(store: store, loadVectors: false)
+            codeStore = store
+            if let counts = try? store.counts() { applyCode(counts) }
+        } catch {
+            log("can't open the code index: \(error)")
+        }
+    }
+
+    /// Code search was turned off: its index goes (indexQueue, with no helper running).
+    private func removeCodeIndexIfAsked() {
+        guard deleteCodeIndex, helper == nil else { return }
+        deleteCodeIndex = false
+        let file = indexDirectory.appendingPathComponent(IndexStore.codeFile)
+        for path in [file.path, file.path + "-wal", file.path + "-shm"] where FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        log("code search off: the code index was deleted")
+    }
+
+    private func applyCode(_ counts: IndexStore.Counts) {
+        var files = 0, searchable = 0, pending = 0
+        for states in counts.byKindAndState.values {
+            for (state, count) in states {
+                files += count
+                if state == "done" || state == "partial" { searchable += count }
+                if state == "pending" { pending += count }
+            }
+        }
+        update {
+            $0.code.files = files
+            $0.code.searchable = searchable
+            $0.code.pending = pending
+            $0.code.vectors = counts.vectors
+        }
+    }
+
+    private func apply(_ counts: IndexStore.Counts) {
+        var files = 0, searchable = 0, pending = 0
+        for states in counts.byKindAndState.values {
+            for (state, count) in states {
+                files += count
+                if state == "done" || state == "partial" { searchable += count }
+                if state == "pending" { pending += count }
+            }
+        }
+        update {
+            $0.files = files
+            $0.searchable = searchable
+            $0.pending = pending
+            $0.vectors = counts.vectors
+            $0.unfinished = counts.unfinished
+        }
+    }
+
+    // MARK: Indexing (in the helper process)
+
+    /// Watches the chosen folders that are there (a missing one is picked up when a drive connects).
+    private func startWatching() {
+        watcher = nil
+        let (roots, excluded) = lock.withLock { (self.roots, self.excluded) }
+        let present = roots.filter(AppSettings.isFolder)
+        func spellings(_ folders: [URL]) -> [String] {
+            Array(Set(folders.flatMap { [$0.path, FolderSelection.realPath($0.path)] }))
+        }
+        watchedRoots = spellings(present)
+        watchedSkips = spellings(excluded)
+        guard !present.isEmpty else { return }
+        watcher = FolderWatcher(paths: present.map(\.path), latency: 0.25, queue: watchQueue) { [weak self] changes in
+            self?.foldersChanged(changes)
+        }
+        log(watcher == nil ? "watch: can't watch the folders" : "watch: \(present.count) folders")
+    }
+
+    /// Watches the code folders that are there, as `startWatching` does the others.
+    private func startWatchingCode() {
+        codeWatcher = nil
+        codeSyncDebounce?.cancel()
+        codeChangedSince = nil
+        let present = lock.withLock { codeRoots }.filter(AppSettings.isFolder)
+        guard !present.isEmpty else { return }
+        codeWatcher = FolderWatcher(paths: present.map(\.path), latency: 2, queue: watchQueue) { [weak self] changes in
+            self?.codeChanged(changes.map(\.path))
+        }
+        log(codeWatcher == nil ? "watch: can't watch the code folders" : "watch: \(present.count) code folders")
+    }
+
+    /// FSEvents in the code folders, on watchQueue. Code that's being worked on changes all the time: the code index
+    /// catches up once it's been quiet for `codeQuietSeconds` (or every `codeLongestWait` while it isn't). Changes
+    /// code search never reads (git's own files, builds, dependencies) don't count.
+    private func codeChanged(_ paths: [String]) {
+        let relevant = paths.filter { path in
+            !path.split(separator: "/").contains { part in
+                part.hasPrefix(".") || Self.codeNoise.contains(String(part))
+            }
+        }
+        guard !relevant.isEmpty else { return }
+        let now = Date()
+        if codeChangedSince == nil { codeChangedSince = now }
+        codeSyncDebounce?.cancel()
+        let work = DispatchWorkItem { [self] in
+            codeChangedSince = nil
+            log("watch: code changed (\((relevant.first as NSString?)?.lastPathComponent ?? ""))")
+            indexQueue.async { [self] in requestCodeSync() }
+        }
+        codeSyncDebounce = work
+        let waited = now.timeIntervalSince(codeChangedSince ?? now)
+        watchQueue.asyncAfter(deadline: .now() + max(0, min(codeQuietSeconds, codeLongestWait - waited)), execute: work)
+    }
+
+    /// Folders whose changes don't concern the code index (what `Rules` keeps code search out of, by name).
+    private static let codeNoise: Set<String> = [
+        "node_modules", "bower_components", "venv", "site-packages", "__pycache__", "DerivedData", "Pods", "Carthage",
+        "vendor", "Vendor", "third_party", "build", "Build", "dist", "out", "target", "obj", "coverage", "wandb",
+        "mlruns", "lightning_logs",
+    ]
+
+    private func requestCodeSync() {
+        if helper != nil { send("sync code") } else { startHelper() }
+    }
+
+    /// FSEvents, on watchQueue. Waits for things to settle (a copy in progress, a burst of screenshots), then asks
+    /// the helper to sync; a running batch yields to that at its next boundary. Changes to files the crawl never
+    /// indexes (databases, logs, temp files) don't count: each sync rereads every folder.
+    private func foldersChanged(_ changes: [FolderWatcher.Change]) {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let types = Set(lock.withLock { excludedTypes })
+        let paths = changes.filter { change in
+            watchedRoots.contains { Rules.isWalked(change.path, root: $0, home: home, excluded: watchedSkips) }
+                && Rules.changeMayMatter(change.path, isFolder: change.isFolder, excludedExtensions: types)
+        }.map(\.path)
+        guard !paths.isEmpty else { return }
+        log("watch: \(paths.count) changed (\((paths.first as NSString?)?.lastPathComponent ?? ""))")
+        syncDebounce?.cancel()
+        let work = DispatchWorkItem { [self] in
+            indexQueue.async { [self] in requestSync() }
+        }
+        syncDebounce = work
+        watchQueue.asyncAfter(deadline: .now() + 0.75, execute: work)
+    }
+
+    private func requestSync() {
+        syncWantedAt = Date()
+        guard lock.withLock({ powerBlocker == nil }) else { return }
+        if helper != nil { send("sync") } else { startHelper() }
+    }
+
+    /// Starts `digup index-service` unless one is running (or indexing is paused). It syncs first, indexes up to
+    /// new files when the power gate allows, then the backfill if its policy allows; it exits a minute after
+    /// its last file. Before the model has downloaded it only syncs (file names become searchable) and exits.
+    private func startHelper() {
+        let (roots, excluded, types, paused, backfill): ([URL], [URL], [String], Bool, Bool) = lock.withLock {
+            (self.roots, self.excluded, self.excludedTypes, self.paused || heldUntil != nil || powerBlocker != nil, backfillBlocker == nil)
+        }
+        let (codeRoots, codeExcluded) = lock.withLock { (self.codeRoots, self.codeExcluded) }
+        guard helper == nil, !paused else {
+            // Paused, or outside the set hours: the next start syncs. Launched outside them, it never started.
+            if helper == nil { update { if case .starting = $0.activity { $0.activity = .idle } } }
+            // One still stopping (Resume right after Pause): a new one once it's gone, whatever its exit says.
+            else if !paused { startWanted = true }
+            return
+        }
+        startWanted = false
+        guard !roots.isEmpty || !codeRoots.isEmpty || pruneWanted else {
+            update { $0.activity = .idle }
+            return
+        }
+        let process = Process()
+        process.executableURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/digup")
+        var arguments = ["index-service", "--index", indexDirectory.path]
+        if backfill { arguments.append("--backfill") }
+        if pruneWanted { arguments.append("--prune") }
+        for folder in excluded { arguments += ["--exclude", folder.path] }
+        for type in types { arguments += ["--exclude-ext", type] }
+        for folder in codeRoots { arguments += ["--code-root", folder.path] }
+        for folder in codeExcluded { arguments += ["--code-exclude", folder.path] }
+        // Dev runs can give the helper more (-debugHelperArgs "--time-limit 0": its watchdog stops on every file).
+        if UserDefaults.standard.string(forKey: "defaultsSuite") != nil,
+           let extra = UserDefaults.standard.string(forKey: "debugHelperArgs") {
+            arguments += extra.split(separator: " ").map(String.init)
+        }
+        process.arguments = arguments + roots.map(\.path)
+        process.environment = ProcessInfo.processInfo.environment.merging(["DIGUP_MODELS": modelsDirectory.path]) { $1 }
+        process.qualityOfService = .utility
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = Self.appendingHandle(indexDirectory.appendingPathComponent("indexer.log"))
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil }
+            guard let self else { return }
+            indexQueue.async { self.received(data) }
+        }
+        process.terminationHandler = { [weak self] process in
+            let status = process.terminationStatus
+            guard let self else { return }
+            indexQueue.async { self.helperExited(status: status) }
+        }
+        do {
+            try process.run()
+        } catch {
+            log("indexer: can't start \(process.executableURL?.path ?? "the helper"): \(error)")
+            update { $0.activity = .failed("无法启动索引任务") }
+            return
+        }
+        helper = process
+        helperInput = input.fileHandleForWriting
+        helperStarted = Date()
+        helperOutput = Data()
+        pruneWanted = false
+        update {   // the helper says first if any are still missing or unreadable
+            $0.missingRoots = []
+            $0.unreadableRoots = []
+            $0.code.missingRoots = []
+            $0.code.unreadableRoots = []
+        }
+        log("indexer: started (pid \(process.processIdentifier))")
+    }
+
+    /// Asks the helper to stop (it does between files) and ends it if it's still there some seconds later: a helper
+    /// stuck in one file never gets to the next, and Pause or a change of folders has to work anyway. What it was
+    /// reading is read again next time.
+    private func stopHelper(within seconds: Double = 15) {
+        send("stop")
+        guard let process = helper else { return }
+        indexQueue.asyncAfter(deadline: .now() + seconds) { [self] in
+            guard helper === process, process.isRunning else { return }
+            log("indexer: still running \(Int(seconds)) s after stop; ending it")
+            process.terminate()
+        }
+    }
+
+    private func send(_ command: String) {
+        do {
+            try helperInput?.write(contentsOf: Data((command + "\n").utf8))
+        } catch {
+            // It's on its way out; `helperExited` restarts it if a sync is still owed.
+            log("indexer: couldn't send \"\(command)\": \(error)")
+        }
+    }
+
+    private func received(_ data: Data) {
+        helperOutput.append(data)
+        while let newline = helperOutput.firstIndex(of: 0x0A) {
+            let line = helperOutput[helperOutput.startIndex..<newline]
+            helperOutput.removeSubrange(helperOutput.startIndex...newline)
+            guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            handle(event)
+        }
+    }
+
+    private func handle(_ event: [String: Any]) {
+        func int(_ key: String) -> Int { event[key] as? Int ?? 0 }
+        if event["code"] as? Bool == true { return handleCode(event) }
+        switch event["event"] as? String {
+        case "scanning":
+            update {
+                if case .failed = $0.activity { return }
+                $0.activity = .syncing
+            }
+        case "sync":
+            if let started = event["started"] as? Double, let wanted = syncWantedAt,
+               started >= wanted.timeIntervalSince1970 {
+                syncWantedAt = nil
+            }
+            applyCounts(event)
+            if let leftOut = event["left_out"] as? [String: [String: Int]] { update { $0.leftOut = leftOut } }
+            update { if case .syncing = $0.activity { $0.activity = .idle } }
+            if int("new") > 0 { update { $0.activity = .indexing(done: 0, total: int("new")) } }
+            log("sync: \(int("added")) new · \(int("changed")) changed · \(int("moved")) moved · "
+                + "\(int("removed")) removed · \(int("unchanged")) unchanged in \(int("ms")) ms")
+        case "file":
+            let (done, total) = (int("done"), int("total"))
+            applySourceCounts(event)
+            update {
+                $0.activeSource = (event["source"] as? String).flatMap(IndexSource.init(rawValue:))
+                $0.activity = .indexing(done: done, total: total)
+            }
+            if event["new"] as? Bool == true, let path = event["path"] as? String {
+                log(String(format: "index: %@ %@ in %.2f s", (path as NSString).lastPathComponent,
+                           event["state"] as? String ?? "?", event["seconds"] as? Double ?? 0))
+            }
+            refreshSearcher(force: false)
+        case "rest":
+            update { $0.activeSource = (event["source"] as? String).flatMap(IndexSource.init(rawValue:)) }
+            update { $0.activity = .finishing(done: int("done"), total: int("total"), files: int("files")) }
+            refreshSearcher(force: false)
+        case "summary":
+            let states = (event["states"] as? [String: Int] ?? [:]).sorted { $0.key < $1.key }
+                .map { "\($0.value) \($0.key)" }.joined(separator: " · ")
+            let what = event["rest"] as? Bool == true ? "the rest of long files"
+                : event["new"] as? Bool == true ? "new files" : "backfill"
+            log("index: \(what): \(states) in \(int("ms")) ms")
+        case "idle":
+            applyCounts(event)
+            update { $0.activity = .idle; $0.activeSource = nil }
+            refreshSearcher(force: true)
+        case "waiting":
+            applyCounts(event)
+            update {
+                $0.activity = .idle
+                $0.waitingForModel = true
+            }
+            log("indexer: waiting for the model to download")
+        case "missing":
+            let folders = event["folders"] as? [String] ?? []
+            let unreadable = event["unreadable"] as? [String] ?? []
+            update {
+                $0.missingRoots = folders
+                $0.unreadableRoots = unreadable
+            }
+            if !folders.isEmpty { log("indexer: not connected: \(folders.map(tildePath))") }
+            if !unreadable.isEmpty { log("indexer: no access: \(unreadable.map(tildePath))") }
+        case "stopped":
+            log("indexer: skipped \(tildePath(event["path"] as? String ?? "?")): it \(event["why"] as? String ?? "")")
+        case "rescan":
+            log("indexer: reading \(int("files")) files again that 知处 reads better now (scans' words, SVGs)")
+        case "pruned":
+            log("indexer: \(int("files")) files under folders no longer chosen left the index")
+        case "reindex":
+            log("indexer: the model or settings changed, indexing everything again (was: \(event["from"] as? String ?? "?"))")
+        case "error":
+            log("indexer: \(event["message"] as? String ?? "error")")
+            update {
+                if event["fatal"] as? Bool == true { $0.activity = .failed("索引已停止") }
+                else if case .syncing = $0.activity { $0.activity = .idle }
+            }
+        default:
+            break
+        }
+    }
+
+    /// Events about the code index ("code": true).
+    private func handleCode(_ event: [String: Any]) {
+        func int(_ key: String) -> Int { event[key] as? Int ?? 0 }
+        switch event["event"] as? String {
+        case "sync":
+            applyCounts(event)
+            // New code is read right away only when the main index has nothing waiting; else it waits its turn.
+            if int("new") > 0, int("pending") == 0 { update { $0.code.indexing = .init(done: 0, total: int("new")) } }
+            log("code sync: \(int("added")) new · \(int("changed")) changed · \(int("moved")) moved · "
+                + "\(int("removed")) removed · \(int("unchanged")) unchanged in \(int("ms")) ms")
+        case "file":
+            update {
+                $0.code.indexing = .init(done: int("done"), total: int("total"))
+                $0.activity = .idle
+                $0.activeSource = nil
+            }
+            refreshCodeSearcher(force: false)
+        case "summary":
+            let states = (event["states"] as? [String: Int] ?? [:]).sorted { $0.key < $1.key }
+                .map { "\($0.value) \($0.key)" }.joined(separator: " · ")
+            log("index: code: \(states) in \(int("ms")) ms")
+            update { $0.code.indexing = nil }
+            refreshCodeSearcher(force: true)
+        case "missing":
+            let folders = event["folders"] as? [String] ?? []
+            let unreadable = event["unreadable"] as? [String] ?? []
+            update {
+                $0.code.missingRoots = folders
+                $0.code.unreadableRoots = unreadable
+            }
+            if !folders.isEmpty { log("indexer: code folders not connected: \(folders.map(tildePath))") }
+            if !unreadable.isEmpty { log("indexer: no access to code folders: \(unreadable.map(tildePath))") }
+        case "stopped":
+            log("indexer: skipped \(tildePath(event["path"] as? String ?? "?")): it \(event["why"] as? String ?? "")")
+        case "pruned":
+            log("indexer: \(int("files")) files under code folders no longer chosen left the code index")
+        case "reindex":
+            log("indexer: the model changed, the code index starts over")
+        case "error":
+            log("indexer: code: \(event["message"] as? String ?? "error")")
+            if event["fatal"] as? Bool == true { update { $0.activity = .failed("索引已停止") } }
+        default:
+            break
+        }
+    }
+
+    private func applySourceCounts(_ event: [String: Any]) {
+        guard let values = event["sources"] as? [String: [String: Int]], !values.isEmpty else { return }
+        let counts = Dictionary(uniqueKeysWithValues: values.compactMap { key, value -> (IndexSource, IndexSourceCounts)? in
+            guard let source = IndexSource(rawValue: key) else { return nil }
+            return (source, IndexSourceCounts(fields: value))
+        })
+        update {
+            $0.sources = counts
+            $0.files = counts.values.reduce(0) { $0 + $1.files }
+            $0.searchable = counts.values.reduce(0) { $0 + $1.searchable }
+            $0.pending = counts.values.reduce(0) { $0 + $1.pending }
+            $0.unfinished = counts.values.reduce(0) { $0 + $1.unfinished }
+        }
+    }
+
+    private func applyCounts(_ event: [String: Any]) {
+        applySourceCounts(event)
+        if let files = event["files"] as? Int {
+            update {
+                $0.files = files
+                $0.searchable = event["searchable"] as? Int ?? 0
+                $0.pending = event["pending"] as? Int ?? 0
+                $0.vectors = event["vectors"] as? Int ?? 0
+                $0.unfinished = event["unfinished"] as? Int ?? 0
+            }
+        }
+        if let files = event["code_files"] as? Int {
+            update {
+                $0.code.files = files
+                $0.code.searchable = event["code_searchable"] as? Int ?? 0
+                $0.code.pending = event["code_pending"] as? Int ?? 0
+                $0.code.vectors = event["code_vectors"] as? Int ?? 0
+            }
+        }
+    }
+
+    private func helperExited(status: Int32) {
+        helper = nil
+        helperInput = nil
+        log("indexer: exited (\(status)) after \(ms(since: helperStarted))")
+        update {
+            if case .indexing = $0.activity { $0.activity = .idle }
+            if case .finishing = $0.activity { $0.activity = .idle }
+            if case .starting = $0.activity { $0.activity = .idle }
+            if case .syncing = $0.activity { $0.activity = .idle }
+            $0.code.indexing = nil
+            $0.activeSource = nil
+        }
+        refreshSearcher(force: true)
+        refreshCodeSearcher(force: true)
+        returnFreedMemory()
+        removeCodeIndexIfAsked()
+        if restartHelper || startWanted {
+            // The folders changed (a new helper with the new ones), or a start was asked while this one was stopping.
+            restartHelper = false
+            startWanted = false
+            startHelper()
+        } else if status == Self.stoppedOnFile {
+            // Its watchdog ended it on a file whose reading ran away: the next one skips that file and goes on. Not
+            // over and over, though, if something else is wrong.
+            watchdogStops = watchdogStops.filter { Date().timeIntervalSince($0) < 600 } + [Date()]
+            if watchdogStops.count <= 3 { startHelper() } else { log("indexer: stopped on files 4 times in 10 min") }
+        } else if syncWantedAt != nil, status == 0 {
+            // A sync asked for while it was on its way out still has to happen.
+            startHelper()
+        }
+    }
+
+    /// New vectors reach the panel: reload the searcher's copy, at most every 2 s during a long pass. If the panel
+    /// hasn't been used lately the vectors aren't loaded at all, and they load fresh when it opens.
+    private func refreshSearcher(force: Bool) {
+        guard force || Date().timeIntervalSince(lastSearcherRefresh) > 2 else { return }
+        lastSearcherRefresh = Date()
+        searchQueue.async { [self] in
+            if force, let sources = try? searchStore?.sourceCounts() { update { $0.sources = sources } }
+            guard let searcher, searcher.vectorsLoaded else { return }
+            let started = Date()
+            try? searcher.reload()
+            log("engine: searcher reloaded, \(searcher.vectorCount) vectors in \(ms(since: started))")
+        }
+    }
+
+    private var lastCodeRefresh = Date.distantPast
+
+    /// New code vectors reach code search, as `refreshSearcher` does for the main index.
+    private func refreshCodeSearcher(force: Bool) {
+        guard force || Date().timeIntervalSince(lastCodeRefresh) > 2 else { return }
+        lastCodeRefresh = Date()
+        searchQueue.async { [self] in
+            guard let codeSearcher, codeSearcher.vectorsLoaded else { return }
+            try? codeSearcher.reload()
+        }
+    }
+
+    /// Pause takes effect after the current batch (the helper finishes it and exits); Resume starts a new one.
+    func setPaused(_ paused: Bool) {
+        lock.withLock { self.paused = paused }
+        update { $0.paused = paused }
+        log(paused ? "indexing paused" : "indexing resumed")
+        indexQueue.async { [self] in
+            if paused { stopHelper() } else { startHelper() }
+        }
+    }
+
+    /// From `IndexSchedule`: outside the set hours, when indexing may run again (the helper stops after its batch, as
+    /// with Pause, and none starts till then; changes meanwhile are found by the first sync after); nil inside them.
+    /// Pause is separate: neither undoes the other.
+    func setHeldUntil(_ date: Date?) {
+        lock.withLock { heldUntil = date }
+        update { $0.heldUntil = date }
+        indexQueue.async { [self] in
+            if date != nil { if helper != nil { stopHelper() } } else { startHelper() }
+        }
+    }
+
+    /// From `PowerPolicy`: why the backfill has to wait now, or nil when it may run.
+    func setBackfillBlocker(_ reason: String?) {
+        lock.withLock { backfillBlocker = reason }
+        update { $0.waitingFor = reason }
+        indexQueue.async { [self] in
+            if helper != nil {
+                send(reason == nil ? "backfill on" : "backfill off")
+            } else if reason == nil {
+                startHelper()
+            }
+        }
+    }
+
+    /// Applies to folder/code indexing and incremental updates, even when the normal backfill policy allows work.
+    func setPowerBlocker(_ reason: String?) {
+        let changed = lock.withLock {
+            guard powerBlocker != reason else { return false }
+            powerBlocker = reason
+            return true
+        }
+        guard changed else { return }
+        update { $0.powerBlocker = reason }
+        indexQueue.async { [self] in
+            if reason != nil { if helper != nil { stopHelper() } }
+            else { requestSync() }
+        }
+    }
+
+    private static func appendingHandle(_ url: URL) -> FileHandle {
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return FileHandle.nullDevice }
+        handle.seekToEndOfFile()
+        return handle
+    }
+
+    // MARK: Search
+
+    /// Hybrid search. Without a vector it's keyword-only (file names, OCR and document text), which is what the panel
+    /// shows while the query encoder starts. Files that are gone (deleted since the last sync, or on a drive that's
+    /// unplugged) are left out.
+    /// `code`: the code index (its own folders), never anything else.
+    func search(_ text: String, vector: QueryVector?, prefixLast: Bool, kinds: Set<FileKind>? = nil,
+                limit: Int = 40, code: Bool = false, folder: String? = nil) async -> [SearchHit] {
+        if code { return await searchCode(text, vector: vector, prefixLast: prefixLast, limit: limit, folder: folder) }
+        return await withCheckedContinuation { continuation in
+            searchQueue.async { [self] in
+                var values = vector?.values
+                if let vector, let indexed = searcher?.vectorSource, indexed != vector.source {
+                    if !warnedAboutSource {
+                        log("meaning search is off: the index was built with \(indexed), the encoder is \(vector.source)")
+                        warnedAboutSource = true
+                    }
+                    values = nil
+                }
+                // Only files that are searched (`FolderSelection`'s rule, as the crawler walks them) and of types not
+                // skipped: a removed folder's rows (or a newly skipped type's) can outlive it until a helper syncs
+                // (indexing was paused, or the app quit first).
+                let (chosen, excluded, types): ([URL], [URL], Set<String>) = lock.withLock {
+                    (self.roots, self.excluded, Set(self.excludedTypes))
+                }
+                let folders = chosen.map(\.path), skipped = excluded.map(\.path)
+                let isMail = folder?.hasPrefix("mail:") == true
+                let account = folder.flatMap { $0.hasPrefix("mail:account:") ? String($0.dropFirst(13)) : nil }
+                let allowedMailboxes = lock.withLock { self.mailboxes }
+                let scope = SearchScope(folders: folders, skipped: skipped, excludedTypes: Array(types),
+                    within: isMail ? mailCache.path : folder, mailAccount: account, mailboxes: allowedMailboxes, mailCache: mailCache.path)
+                let hits = try? searcher?.search(text, queryVector: values, kinds: kinds, limit: limit,
+                                                 prefixLast: prefixLast, scope: scope)
+                continuation.resume(returning: (hits ?? []).filter { hit in
+                    FolderSelection.isSearched(hit.path, folders: folders, skipped: skipped)
+                        && !types.contains((hit.path as NSString).pathExtension.lowercased())
+                        && FileManager.default.fileExists(atPath: hit.path)
+                })
+            }
+        }
+    }
+
+    private func searchCode(_ text: String, vector: QueryVector?, prefixLast: Bool, limit: Int, folder: String?) async -> [SearchHit] {
+        await withCheckedContinuation { continuation in
+            searchQueue.async { [self] in
+                let (roots, skipped) = lock.withLock { (codeRoots.map(\.path), codeExcluded.map(\.path)) }
+                guard !roots.isEmpty, let codeSearcher else { return continuation.resume(returning: []) }
+                var values = vector?.values
+                if let vector, let indexed = codeSearcher.vectorSource, indexed != vector.source { values = nil }
+                let scope = SearchScope(folders: roots, skipped: skipped, within: folder)
+                let hits = (try? codeSearcher.search(text, queryVector: values, limit: limit, prefixLast: prefixLast, scope: scope)) ?? []
+                continuation.resume(returning: hits.filter { hit in
+                    FolderSelection.isSearched(hit.path, folders: roots, skipped: skipped)
+                        && FileManager.default.fileExists(atPath: hit.path)
+                })
+            }
+        }
+    }
+
+    /// The text of the part of a file a hit points at (a document's passage, a page, a stretch of code), for the
+    /// preview.
+    func text(ofSegment id: Int64, code: Bool = false) async -> String? {
+        await withCheckedContinuation { continuation in
+            searchQueue.async { [self] in
+                continuation.resume(returning: (try? (code ? codeSearcher : searcher)?.text(ofSegment: id)) ?? nil)
+            }
+        }
+    }
+
+    // MARK: Index overview (main window)
+
+    struct FileIssue: Sendable, Identifiable {
+        let path: String
+        let detail: String
+        var id: String { path }
+    }
+
+    /// What's indexed under one folder.
+    struct RootSummary: Sendable, Identifiable {
+        let path: String
+        var missing = false
+        var unreadable = false
+        var files = 0, indexed = 0, pending = 0, failed = 0, skipped = 0
+        var failures: [FileIssue] = []
+        var unfinished = 0   // long files searchable but still being read (counted in `indexed` too)
+        var kinds: [FileKind: Int] = [:]
+        /// Why the skipped files were skipped once read ("no text", "silent or shorter than 2 s"), by reason.
+        var skippedReasons: [String: Int] = [:]
+        /// What the last sync never queued from this folder, by reason (the crawl's `leftOut`).
+        var leftOut: [String: Int] = [:]
+        var leftOutCount: Int { leftOut.values.reduce(0, +) }
+        var id: String { path }
+    }
+
+    /// What's indexed under each folder; `code`: each code folder, in the code index.
+    func rootSummaries(code: Bool = false) async -> [RootSummary] {
+        await withCheckedContinuation { continuation in
+            searchQueue.async { [self] in
+                let (unreadable, leftOut) = lock.withLock {
+                    (Set(code ? status.code.unreadableRoots : status.unreadableRoots), code ? [:] : status.leftOut)
+                }
+                let store = code ? codeStore : searchStore
+                let summaries = lock.withLock { code ? codeRoots : fileRoots }.map { root -> RootSummary in
+                    var summary = RootSummary(path: root.path, missing: !AppSettings.isFolder(root),
+                                              unreadable: unreadable.contains(root.path))
+                    summary.leftOut = leftOut[root.path] ?? leftOut[FolderSelection.realPath(root.path)] ?? [:]
+                    for file in (try? store?.files(under: [root.path])) ?? [] {
+                        summary.files += 1
+                        summary.kinds[file.kind, default: 0] += 1
+                        switch file.state {
+                        case "done": summary.indexed += 1
+                        case "partial":
+                            summary.indexed += 1
+                            summary.unfinished += 1
+                        case "pending": summary.pending += 1
+                        case "failed":
+                            summary.failed += 1
+                            if summary.failures.count < 20 {
+                                summary.failures.append(FileIssue(path: file.path, detail: file.detail ?? "unknown"))
+                            }
+                        default:
+                            summary.skipped += 1
+                            summary.skippedReasons[file.detail ?? "not read", default: 0] += 1
+                        }
+                    }
+                    return summary
+                }
+                continuation.resume(returning: summaries)
+            }
+        }
+    }
+
+    /// Explicit recovery for one still-selected root. Runs off the main thread and respects pause/power/schedule.
+    func retryFailed(in folder: String, code: Bool = false) async throws -> Int {
+        try await withCheckedThrowingContinuation { continuation in
+            searchQueue.async { [self] in
+                do {
+                    let selected = lock.withLock { (code ? codeRoots : roots).contains { $0.path == folder } }
+                    guard selected, let store = code ? codeStore : searchStore else {
+                        throw NSError(domain: "Zhichu", code: 1, userInfo: [NSLocalizedDescriptionKey: "文件夹已移除，或索引尚未就绪"])
+                    }
+                    let count = try store.retryFailed(under: folder)
+                    if count > 0 {
+                        indexQueue.async { [self] in
+                            if helper != nil { send(code ? "sync code" : "sync") } else { startHelper() }
+                        }
+                    }
+                    continuation.resume(returning: count)
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    /// Bytes on disk: the database and its write-ahead log.
+    var indexSize: Int64 {
+        IndexStore.size(of: indexDirectory.appendingPathComponent(IndexStore.mainFile))
+    }
+
+    /// The code index's bytes on disk (0 without code search).
+    var codeIndexSize: Int64 {
+        IndexStore.size(of: indexDirectory.appendingPathComponent(IndexStore.codeFile))
+    }
+
+    // MARK: Query encoder
+
+    /// Gets meaning search ready as the panel opens: starts the query encoder (~0.35 s cold) and loads the vectors,
+    /// in parallel, so both are usually done by the time you've typed a few words.
+    func prewarm() {
+        encoderQueue.async { [self] in
+            encoderFailed = false   // opening the panel is a fresh chance
+            if runningEncoder() != nil { scheduleIdleExit() }
+        }
+        searchQueue.async { [self] in
+            guard let searcher, !searcher.vectorsLoaded else { return }
+            let started = Date()
+            do {
+                try searcher.reload()
+                log("engine: \(searcher.vectorCount) vectors loaded in \(ms(since: started))")
+            } catch {
+                log("can't load vectors: \(error)")
+            }
+        }
+    }
+
+    /// Embeds what's typed so far, right away, and caches it. The panel calls this on every keystroke: the GPU stays
+    /// awake (after even 150 ms idle a query takes ~19 ms instead of ~6), and when typing pauses the vector is
+    /// usually ready. Skipped when newer text arrives before its turn.
+    func embedAhead(_ text: String, code: Bool = false) {
+        let key = Self.cacheKey(text, code: code)
+        lock.withLock { newestTyped = key }
+        encoderQueue.async { [self] in
+            guard lock.withLock({ newestTyped }) == key else { return }
+            _ = vector(for: text, code: code)
+        }
+    }
+
+    /// A query's vector depends on its prompt: a search of code (`Prompts.codeQuery`) or of everything else.
+    private static func cacheKey(_ text: String, code: Bool) -> String { code ? "code\u{0}" + text : text }
+
+    /// The query's vector, or nil when the encoder can't run (keyword results still work). Also nil, at once, for
+    /// text that's no longer the newest typed: its results would be thrown away.
+    func embedQuery(_ text: String, code: Bool = false) async -> QueryVector? {
+        let key = Self.cacheKey(text, code: code)
+        return await withCheckedContinuation { continuation in
+            encoderQueue.async { [self] in
+                if vectorCache[key] == nil, let newest = lock.withLock({ newestTyped }), newest != key {
+                    return continuation.resume(returning: nil)
+                }
+                continuation.resume(returning: vector(for: text, code: code))
+            }
+        }
+    }
+
+    private func vector(for text: String, code: Bool) -> QueryVector? {
+        let key = Self.cacheKey(text, code: code)
+        if let cached = vectorCache[key] { return cached }
+        guard let worker = runningEncoder() else { return nil }
+        defer { scheduleIdleExit() }
+        do {
+            let values = try worker.embedTexts([code ? Prompts.codeQuery(text) : Prompts.query(text)]).first ?? []
+            let vector = QueryVector(values: values, source: worker.info.vectorSource)
+            vectorCache[key] = vector
+            return vector
+        } catch {
+            log("encoder: \(error)")
+            stopEncoder()   // the next query starts a new one
+            return nil
+        }
+    }
+
+    private func runningEncoder() -> EmbeddingWorker? {
+        if let encoder { return encoder }
+        guard !encoderFailed else { return nil }
+        let python = try? WorkerConfig.fromEnvironment()
+        // Still downloading: no meaning search yet, which isn't a failure.
+        guard python != nil || FileManager.default.fileExists(
+            atPath: modelsDirectory.appendingPathComponent(ModelFiles.text.name).path) else { return nil }
+        update { $0.encoder = .starting }
+        let started = Date()
+        do {
+            // The bundled helper runs the model (`digup worker`); in dev runs DIGUP_WORKER_DIR swaps in another worker.
+            var config = python ?? .helper(Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/digup"))
+            config.environment["DIGUP_MODELS"] = modelsDirectory.path
+            config.log = indexDirectory.appendingPathComponent("worker-query.log")
+            config.qos = .userInitiated
+            let worker = try EmbeddingWorker(config, textOnly: true)
+            encoder = worker
+            log("encoder: ready in \(ms(since: started)) (model load and warm-up \(worker.info.loadSeconds ?? 0) s)")
+            update { $0.encoder = .ready }
+            return worker
+        } catch {
+            encoderFailed = true
+            log("encoder: can't start: \(error)")
+            update { $0.encoder = .unavailable }
+            return nil
+        }
+    }
+
+    /// The encoder exits after `encoderIdleSeconds` without a query (its ~0.25 GB goes back to the system), and the
+    /// vectors go with it; keyword search keeps working, and the next panel open brings both back.
+    private func scheduleIdleExit() {
+        encoderIdleExit?.cancel()
+        let exit = DispatchWorkItem { [self] in
+            guard encoder != nil else { return }
+            log("encoder: idle for \(Int(encoderIdleSeconds)) s, stopping")
+            stopEncoder()
+            searchQueue.async { [self] in
+                searcher?.releaseVectors()
+                codeSearcher?.releaseVectors()
+                returnFreedMemory()
+            }
+        }
+        encoderIdleExit = exit
+        encoderQueue.asyncAfter(deadline: .now() + encoderIdleSeconds, execute: exit)
+    }
+
+    private func stopEncoder() {
+        encoder?.close()
+        encoder = nil
+        vectorCache.removeAll()
+        encoderIdleExit?.cancel()
+        encoderIdleExit = nil
+        update { $0.encoder = .stopped }
+    }
+}
+
+/// Recent query vectors by text: retyping or going back to an earlier query costs nothing.
+nonisolated struct QueryVectorCache {
+    let limit: Int
+    private var vectors: [String: Engine.QueryVector] = [:]
+    private var order: [String] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    subscript(text: String) -> Engine.QueryVector? {
+        get { vectors[text] }
+        set {
+            guard let newValue else { return }
+            if vectors.updateValue(newValue, forKey: text) == nil { order.append(text) }
+            if order.count > limit { vectors[order.removeFirst()] = nil }
+        }
+    }
+
+    mutating func removeAll() {
+        vectors = [:]
+        order = []
+    }
+}
+
+/// Hands pages that malloc has freed back to the OS. A crawl or an indexing batch leaves megabytes of freed but still
+/// dirty pages, which count against the app's footprint until something else asks for memory.
+nonisolated func returnFreedMemory() {
+    malloc_zone_pressure_relief(nil, 0)
+}

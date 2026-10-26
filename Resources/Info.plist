@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>知处</string>
+	<key>CFBundleExecutable</key>
+	<string>Zhichu</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.zhichu.mac</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>知处</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.11</string>
+	<key>CFBundleVersion</key>
+	<string>12</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>知处请求 QuickTime Player 将录音或视频打开到搜索命中的时间位置。</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>知处仅索引你选择的文件夹，方便按内容查找资料。文件与索引保留在本机。</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>知处仅索引你选择的文件夹，方便按内容查找资料。文件与索引保留在本机。</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>知处仅索引你选择的文件夹，方便按内容查找资料。文件与索引保留在本机。</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>知处仅索引你选择的文件夹，方便按内容查找资料。文件与索引保留在本机。</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh_CN</string>
+		<string>en</string>
+	</array>
+</dict>
+</plist>
