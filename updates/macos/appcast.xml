@@ -11,13 +11,13 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:shortVersionString>0.1.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description>&lt;h2&gt;知处 0.1.13 · 首个公开预览版&lt;/h2&gt;
-&lt;ul&gt;&lt;li&gt;按文字、画面与声音搜索本机资料，支持文件夹范围、类型筛选及命中内容预览。&lt;/li&gt;&lt;li&gt;支持主动开启的本地 Apple Mail 来源及附件搜索，以及独立代码索引。&lt;/li&gt;&lt;li&gt;支持应用内检查更新，由你确认下载、安装和重新启动。&lt;/li&gt;&lt;li&gt;应用和 DMG 均完成 Apple 公证并附加公证凭证。&lt;/li&gt;&lt;/ul&gt;
+            <description>&lt;h2&gt;知处 0.1.13 · 首个版本&lt;/h2&gt;
+&lt;ul&gt;&lt;li&gt;按文字、画面与声音搜索本机资料，支持文件夹范围、类型筛选及命中内容预览。&lt;/li&gt;&lt;li&gt;支持主动开启的本地 Apple Mail 来源及附件搜索，以及独立代码索引。&lt;/li&gt;&lt;li&gt;支持应用内检查更新，由你确认下载、安装和重新启动。&lt;/li&gt;&lt;/ul&gt;
 &lt;p&gt;Apple Silicon · macOS 14 及以上。首次使用需独立准备模型文件。&lt;/p&gt;</description>
             <enclosure url="https://github.com/jiliangC/Zhichu/releases/download/v0.1.13/Zhichu-0.1.13-macos-arm64.zip" length="15097034" type="application/octet-stream" sparkle:edSignature="TiVAkLz4zGIO/jkkWx/N62c3Syn4KWmG6ZSi0zNikXvlMWd5aguGcOD6BhgNyMZ7qh0wGAfAyetp+vkH5KzyDQ=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: Uk1g9FqyMxlCkvF/tAk+XZfy613CIuDohNMr7lKFVMH6fY72AFG/Q+MXBjLEOWrvx5rt/hZ3ORwmD/uZZ3VfDA==
-length: 1847
+edSignature: 1oERTJ2WJt/JfbjWcuW3IEerTvVRK0h2hmwAA00awgT8ekGqiMdntdaMjsAZ/2X3q9eULF/tz3sdfP5q2RUhBw==
+length: 1757
 -->
