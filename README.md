@@ -53,7 +53,7 @@ Apple Mail 搜索默认关闭。开启后只读取已下载到本机的邮件与
 3. 选择搜索目录，等待模型准备及首次索引完成。
 4. 按 **⇧⌘Space**，输入你记得的内容。
 
-当前为首个公开预览版本，仅提供 Apple Silicon Mac 构建。应用使用 Developer ID 签名；本次发布是否完成 Apple 公证，以对应 Release 的说明为准。
+当前为公开预览版本，仅提供 Apple Silicon Mac 构建。0.1.13 起的官方安装包使用 Developer ID 签名并完成 Apple 公证。历史版本的公证状态以对应 Release 说明为准。
 
 ## 快捷操作
 
