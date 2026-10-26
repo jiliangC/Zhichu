@@ -60,7 +60,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
         if let version = model.updateAvailable {
-            menu.addItem(ActionMenuItem("更新至知处 \(version)…") { [weak self] in self?.onCheckForUpdates() })
+            menu.addItem(ActionMenuItem("更新至知处 \(version)…", isEnabled: { [weak self] in self?.model.canCheckForUpdates == true }) { [weak self] in self?.onCheckForUpdates() })
             menu.addItem(.separator())
         }
 
@@ -90,7 +90,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem("设置", key: ",") { [weak self] in self?.onSettings() })
         if model.updateAvailable == nil {
-            menu.addItem(ActionMenuItem("检查更新…") { [weak self] in self?.onCheckForUpdates() })
+            menu.addItem(ActionMenuItem("检查更新", isEnabled: { [weak self] in self?.model.canCheckForUpdates == true }) { [weak self] in self?.onCheckForUpdates() })
         }
         menu.addItem(ActionMenuItem("退出知处", key: "q") { NSApp.terminate(nil) })
     }
@@ -157,18 +157,22 @@ struct MenuStatusView: View {
 }
 
 /// Makes an NSMenuItem that runs a closure.
-private final class MenuAction: NSObject {
+private final class MenuAction: NSObject, NSMenuItemValidation {
     let handler: () -> Void
+    let isEnabled: () -> Bool
 
-    init(_ handler: @escaping () -> Void) {
+    init(_ handler: @escaping () -> Void, isEnabled: @escaping () -> Bool) {
         self.handler = handler
+        self.isEnabled = isEnabled
     }
 
-    @objc func run() { handler() }
+    @objc func run() { if isEnabled() { handler() } }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { isEnabled() }
 }
 
-func ActionMenuItem(_ title: String, key: String = "", handler: @escaping () -> Void) -> NSMenuItem {
-    let action = MenuAction(handler)
+func ActionMenuItem(_ title: String, key: String = "", isEnabled: @escaping () -> Bool = { true },
+                    handler: @escaping () -> Void) -> NSMenuItem {
+    let action = MenuAction(handler, isEnabled: isEnabled)
     let item = NSMenuItem(title: title, action: #selector(MenuAction.run), keyEquivalent: key)
     item.target = action
     item.representedObject = action  // `target` is weak; this keeps the action alive

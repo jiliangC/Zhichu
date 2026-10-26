@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "关于知处", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
-        appMenu.addItem(ActionMenuItem("检查更新…") { [weak app] in app?.updates.checkNow() })
+        appMenu.addItem(ActionMenuItem("检查更新", isEnabled: { [weak app] in app?.updates.canCheck == true }) { [weak app] in app?.updates.checkNow() })
         appMenu.addItem(.separator())
         appMenu.addItem(ActionMenuItem("设置", key: ",") { [weak app] in app?.showSettings() })
         appMenu.addItem(.separator())

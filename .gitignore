@@ -49,7 +49,8 @@ shell/src-tauri/THIRD-PARTY-NOTICES.txt
 
 # Legacy platform packaging and update feeds; this repository ships the native Mac app
 /shell/
-/updates/
+/updates/*
+!/updates/macos/
 /appcast.xml
 /scripts/package-linux.sh
 /scripts/package-windows.sh

@@ -121,7 +121,7 @@ swift test
 邮件必须先下载到 Mail 本地，再由知处检查、解析并完成索引；更新也会受到电源条件和暂停状态影响。
 
 **会自动更新应用吗？**
-当前通过 [Releases](https://github.com/jiliangC/Zhichu/releases) 手动下载新版本。应用内自动更新服务尚未启用。
+从 0.1.12 开始，可在菜单栏点击“检查更新”。启用“自动检查更新”后每天检查一次，发现新版本时提醒，由你确认下载、安装和重新启动。更新列表及安装包使用 Ed25519 签名，安装时同时校验应用代码签名。0.1.11 及更早版本需先从 [Releases](https://github.com/jiliangC/Zhichu/releases) 手动安装一次新版本。
 
 **如何反馈问题？**
 请在 [Issues](https://github.com/jiliangC/Zhichu/issues) 中提供版本、macOS 版本与复现步骤。截图和日志可能包含文件名、搜索词或邮件内容，请先移除私人信息。

@@ -1,54 +1,63 @@
 #!/bin/bash
-# Builds 知处 for release: signed with a Developer ID and the hardened runtime, notarized and stapled, in a DMG.
-#   SIGN_ID="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=Zhichu scripts/release.sh
-# NOTARY_PROFILE names notarytool credentials in your keychain, saved once with
-#   xcrun notarytool store-credentials Zhichu --apple-id you@example.com --team-id TEAMID
-# (it asks for an app-specific password from appleid.apple.com). Output: build.noindex/release/知处-<version>.dmg
-# With APPCAST=<path to appcast.xml> (and NOTES=<an HTML fragment> for the update window), the DMG is also signed for
-# Sparkle and listed first in that update feed (scripts/appcast.py). Publishing the DMG and the feed is a separate step.
+# Package Developer ID signed Zhichu and generate its signed Sparkle feed.
+# Default: notarize and staple using NOTARY_PROFILE. Explicit preview: NOTARIZE=0.
+#   NOTARY_PROFILE=Zhichu scripts/release.sh
+#   NOTARIZE=0 scripts/release.sh
+# Private EdDSA key stays in Keychain account app.zhichu.mac.updates.
+# Upload versioned archives + SHA256SUMS.txt to GitHub Releases FIRST, then publish
+# updates/macos/appcast.xml on main. Never publish a feed that points at a draft.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${SIGN_ID:?set SIGN_ID to a Developer ID Application identity (security find-identity -v -p codesigning)}"
-: "${NOTARY_PROFILE:?set NOTARY_PROFILE to a notarytool keychain profile (see the top of this script)}"
-VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
-APP=build.noindex/知处.app
-OUT=build.noindex/release
-# With APPCAST set the DMG gets signed for Sparkle at the end: make sure the key is in the keychain before the minutes of
-# building and notarizing (sign_update -p prints the public key, or fails without one).
-if [[ -n "${APPCAST:-}" ]]; then
-  SIGN_UPDATE=.build/artifacts/sparkle/Sparkle/bin/sign_update
-  if [[ -x "$SIGN_UPDATE" ]] && ! "$SIGN_UPDATE" -p >/dev/null 2>&1; then
-    echo "APPCAST is set but sign_update finds no Sparkle key in the keychain: not building a DMG that can't be signed" >&2
-    exit 1
-  fi
+SIGN_ID="${SIGN_ID:-$( [[ -f .sign-id ]] && head -1 .sign-id || true )}"
+: "${SIGN_ID:?set SIGN_ID to your Developer ID Application identity}"
+[[ "$SIGN_ID" == 'Developer ID Application:'* ]] || { echo 'A Developer ID Application identity is required' >&2; exit 1; }
+NOTARIZE="${NOTARIZE:-1}"
+[[ "$NOTARIZE" == 0 || "$NOTARIZE" == 1 ]] || { echo 'NOTARIZE must be 0 or 1' >&2; exit 1; }
+if [[ "$NOTARIZE" == 1 ]]; then
+  : "${NOTARY_PROFILE:?set NOTARY_PROFILE; or explicitly use NOTARIZE=0 for an unnotarized preview}"
 fi
-rm -rf "$OUT"
-mkdir -p "$OUT"
-
+VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Resources/Info.plist)
+APP=build.noindex/知处.app
+OUT="build.noindex/release/$VERSION"
+ACCOUNT="${SPARKLE_ACCOUNT:-app.zhichu.mac.updates}"
+export SIGN_ID
+mkdir -p "$OUT" work
 RELEASE=1 ./build.sh
-codesign --verify --strict --deep --verbose=2 "$APP"
-
-# The app itself is notarized and stapled first, so a copy dragged out of the DMG passes Gatekeeper offline too.
-ditto -c -k --keepParent "$APP" "$OUT/知处.zip"
-xcrun notarytool submit "$OUT/知处.zip" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$APP"
-rm "$OUT/知处.zip"
-
-# The DMG: the app beside a link to /Applications. Signed, notarized and stapled as well.
-STAGE="$OUT/dmg"
-mkdir -p "$STAGE"
+codesign --verify --strict --deep "$APP"
+ZIP="$OUT/Zhichu-$VERSION-macos-arm64.zip"
+DMG="$OUT/Zhichu-$VERSION-macos-arm64.dmg"
+if [[ "$NOTARIZE" == 1 ]]; then
+  ditto -c -k --keepParent "$APP" "$OUT/notary-submission.zip"
+  xcrun notarytool submit "$OUT/notary-submission.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  rm "$OUT/notary-submission.zip"
+fi
+ditto -c -k --keepParent "$APP" "$ZIP"
+STAGE=$(mktemp -d "$PWD/work/zhichu-dmg.XXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/知处.app"
 ln -s /Applications "$STAGE/Applications"
-DMG="$OUT/知处-$VERSION.dmg"
-hdiutil create -quiet -volname "知处" -srcfolder "$STAGE" -fs HFS+ -format ULFO -ov "$DMG"
-rm -rf "$STAGE"
+hdiutil create -quiet -volname 知处 -srcfolder "$STAGE" -fs HFS+ -format ULFO -ov "$DMG"
 codesign --force --sign "$SIGN_ID" --timestamp "$DMG"
-xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$DMG"
-
-spctl --assess --type execute --verbose=2 "$APP"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
-if [[ -n "${APPCAST:-}" ]]; then
-  scripts/appcast.py "$DMG" "$APPCAST" ${NOTES:+--notes "$NOTES"}
+if [[ "$NOTARIZE" == 1 ]]; then
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  spctl --assess --type execute --verbose=2 "$APP"
 fi
-echo "Released $DMG ($(du -h "$DMG" | cut -f1))"
+codesign --verify --strict "$DMG"
+hdiutil verify "$DMG" > "$OUT/dmg-verify.log"
+ARGS=("$ZIP" "${APPCAST:-updates/macos/appcast.xml}" --account "$ACCOUNT")
+[[ -z "${NOTES:-}" ]] || ARGS+=(--notes "$NOTES")
+python3 scripts/appcast.py "${ARGS[@]}"
+(cd "$OUT" && shasum -a 256 "Zhichu-$VERSION-macos-arm64.dmg" "Zhichu-$VERSION-macos-arm64.zip" > SHA256SUMS.txt)
+python3 - "$OUT" "$VERSION" "$BUILD" "$NOTARIZE" <<'PY'
+import json, pathlib, sys
+out, version, build, notarized = sys.argv[1:]
+pathlib.Path(out, 'release-info.json').write_text(json.dumps({
+    'version': version, 'build': build, 'notarized': notarized == '1',
+    'feed': 'https://raw.githubusercontent.com/jiliangC/Zhichu/main/updates/macos/appcast.xml',
+}, indent=2)+'\n')
+PY
+echo "Packaged $VERSION ($BUILD) in $OUT. Notarized: $NOTARIZE."
+echo 'Publish archives to Releases, verify downloads, then commit and push the appcast.'

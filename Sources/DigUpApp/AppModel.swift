@@ -12,6 +12,9 @@ final class AppModel {
     var mail: MailController!
     /// A newer 知处 the daily check found ("0.6.1"), until you open it (`Updates`).
     var updateAvailable: String?
+    var canCheckForUpdates = false
+    var lastUpdateCheck: Date?
+    var updateCheckStatus: String?
 
     init(settings: AppSettings, download: ModelDownload) {
         self.settings = settings

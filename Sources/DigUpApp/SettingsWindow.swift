@@ -254,8 +254,9 @@ private struct GeneralSettings: View {
                 })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("自动检查更新")
-                        Text("当前开发版尚未配置知处更新服务。"
-                             + "正式更新渠道配置完成后可在此检查。")
+                        Text(state.app.updates.isConfigured
+                             ? "每天检查知处的新版本，发现后提醒；由你确认下载和安装。"
+                             : "此构建未配置更新服务，请从项目 Releases 下载新版本。")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -264,10 +265,17 @@ private struct GeneralSettings: View {
                 .disabled(!state.app.updates.isConfigured)
                 LabeledContent {
                     Button("立即检查") { state.app.updates.checkNow() }
-                        .disabled(!state.app.updates.canCheck)
+                        .disabled(!state.model.canCheckForUpdates)
                 } label: {
                     Text(state.model.updateAvailable.map { "知处 \($0) 可更新" }
                          ?? "知处 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                }
+                if let status = state.model.updateCheckStatus {
+                    Text(status).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                if let checked = state.model.lastUpdateCheck {
+                    Text("上次检查：\(checked.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -659,7 +667,7 @@ private struct StorageSettings: View {
             }
             Section("隐私") {
                 Text("知处仅读取你选择的文件夹，并在本机保存索引。"
-                     + "联网用于下载模型，以及配置更新服务后的版本检查；"
+                     + "联网用于下载模型，以及版本检查和更新包下载；"
                      + "不会发送你的文件内容。")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

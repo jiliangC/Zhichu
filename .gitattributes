@@ -4,3 +4,6 @@
 # EMLX begins with a byte count; MIME fixtures must keep their original CRLF bytes.
 *.emlx -text
 *.eml -text
+
+# Sparkle signatures cover the exact feed bytes.
+updates/macos/appcast.xml -text
