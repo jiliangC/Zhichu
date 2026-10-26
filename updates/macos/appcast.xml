@@ -1,8 +1,6 @@
-<?xml version="1.0" standalone="yes"?>
-<!-- sparkle-sign-warning:
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
--->
-<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>知处</title>
         <item>
@@ -13,29 +11,13 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:shortVersionString>0.1.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description><![CDATA[<h2>知处 0.1.13</h2>
-<ul><li>应用和 DMG 完成 Apple 公证，并附加公证凭证。</li><li>保留 Developer ID 签名、安装包 Ed25519 签名及签名更新列表。</li><li>可从 0.1.12 的“检查更新”下载并安装本版本。</li></ul>
-<p>Apple Silicon · macOS 14 及以上。产品功能仍处于公开预览阶段。</p>]]></description>
-            <enclosure url="https://github.com/jiliangC/Zhichu/releases/download/v0.1.13/Zhichu-0.1.13-macos-arm64.zip" length="15097034" type="application/octet-stream" sparkle:edSignature="TiVAkLz4zGIO/jkkWx/N62c3Syn4KWmG6ZSi0zNikXvlMWd5aguGcOD6BhgNyMZ7qh0wGAfAyetp+vkH5KzyDQ=="/>
-        </item>
-        <item>
-            <title>0.1.12</title>
-            <pubDate>Mon, 26 Oct 2026 22:54:45 +0800</pubDate>
-            <link>https://github.com/jiliangC/Zhichu</link>
-            <sparkle:version>13</sparkle:version>
-            <sparkle:shortVersionString>0.1.12</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description><![CDATA[<h2>知处 0.1.12</h2>
-<ul><li>菜单“检查更新”去掉省略号。</li><li>接通知处更新服务：手动检查、每日自动检查、确认下载、签名校验、安装并重新启动。</li><li>更新列表与安装包使用独立 Ed25519 密钥签名，安装前校验应用代码签名。</li><li>设置显示上次检查时间；更新期间避免重复检查。</li></ul>
-<p>此版本使用 Developer ID 签名，尚未完成 Apple 公证，仍为公开预览版。</p>
-<p>0.1.11 及更早版本需从 Releases 手动安装一次本版本；此后可在应用内更新。</p>
-]]></description>
-            <enclosure url="https://github.com/jiliangC/Zhichu/releases/download/v0.1.12/Zhichu-0.1.12-macos-arm64.zip" length="15095261" type="application/octet-stream" sparkle:edSignature="SlMcdPWHGrk+mx+9knWhEUDbv9nH8X22WXQ8FSUqEXyxJspUsuMy4+l71bZ9PQEBJawJn/pVHfW5yDqaWaCjCQ=="/>
+            <description>&lt;h2&gt;知处 0.1.13 · 首个公开预览版&lt;/h2&gt;
+&lt;ul&gt;&lt;li&gt;按文字、画面与声音搜索本机资料，支持文件夹范围、类型筛选及命中内容预览。&lt;/li&gt;&lt;li&gt;支持主动开启的本地 Apple Mail 来源及附件搜索，以及独立代码索引。&lt;/li&gt;&lt;li&gt;支持应用内检查更新，由你确认下载、安装和重新启动。&lt;/li&gt;&lt;li&gt;应用和 DMG 均完成 Apple 公证并附加公证凭证。&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Apple Silicon · macOS 14 及以上。首次使用需独立准备模型文件。&lt;/p&gt;</description>
+            <enclosure url="https://github.com/jiliangC/Zhichu/releases/download/v0.1.13/Zhichu-0.1.13-macos-arm64.zip" length="15097034" type="application/octet-stream" sparkle:edSignature="TiVAkLz4zGIO/jkkWx/N62c3Syn4KWmG6ZSi0zNikXvlMWd5aguGcOD6BhgNyMZ7qh0wGAfAyetp+vkH5KzyDQ=="></enclosure>
         </item>
     </channel>
-</rss>
-<!-- sparkle-signatures:
-edSignature: PA58kS3fURy7FxspWNhz4M9HulskyRNukxNzl3/Fkqqa9jchKf+RcJvp6ep3LOM6gz2gO1joLbHLi6UaAp/JAQ==
-length: 2982
+</rss><!-- sparkle-signatures:
+edSignature: Uk1g9FqyMxlCkvF/tAk+XZfy613CIuDohNMr7lKFVMH6fY72AFG/Q+MXBjLEOWrvx5rt/hZ3ORwmD/uZZ3VfDA==
+length: 1847
 -->
