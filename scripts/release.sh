@@ -18,12 +18,12 @@ if [[ "$NOTARIZE" == 1 ]]; then
 fi
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Resources/Info.plist)
-APP=build.noindex/知处.app
+APP=build.noindex/release-build/知处.app
 OUT="build.noindex/release/$VERSION"
 ACCOUNT="${SPARKLE_ACCOUNT:-app.zhichu.mac.updates}"
 export SIGN_ID
 mkdir -p "$OUT" work
-RELEASE=1 ./build.sh
+APP_OUTPUT="$APP" RELEASE=1 ./build.sh
 codesign --verify --strict --deep "$APP"
 ZIP="$OUT/Zhichu-$VERSION-macos-arm64.zip"
 DMG="$OUT/Zhichu-$VERSION-macos-arm64.dmg"
@@ -47,7 +47,7 @@ if [[ "$NOTARIZE" == 1 ]]; then
 fi
 codesign --verify --strict "$DMG"
 hdiutil verify "$DMG" > "$OUT/dmg-verify.log"
-ARGS=("$ZIP" "${APPCAST:-updates/macos/appcast.xml}" --account "$ACCOUNT")
+ARGS=("$ZIP" "${APPCAST:-updates/macos/appcast.xml}" --app "$APP" --account "$ACCOUNT")
 [[ -z "${NOTES:-}" ]] || ARGS+=(--notes "$NOTES")
 python3 scripts/appcast.py "${ARGS[@]}"
 (cd "$OUT" && shasum -a 256 "Zhichu-$VERSION-macos-arm64.dmg" "Zhichu-$VERSION-macos-arm64.zip" > SHA256SUMS.txt)

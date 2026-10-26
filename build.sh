@@ -7,15 +7,17 @@
 #   RELEASE=1 SIGN_ID="Developer ID Application: …" ./build.sh   plus the secure timestamp notarization needs
 #                                    (scripts/release.sh does that, then notarizes and makes the DMG)
 # There's no install step: run it from build.noindex (see scripts/dev-run.sh).
-# For testing in-app updates with a copy of its own (never the installed DigUp's settings or updates), these replace
-# Info.plist values: BUNDLE_ID, VERSION, BUILD_NUMBER, SPARKLE_FEED (the appcast URL), SPARKLE_KEY (the EdDSA public key).
+# APP_OUTPUT chooses a separate output bundle (release packaging uses this).
+# For testing in-app updates, these replace Info.plist values: BUNDLE_ID, VERSION, BUILD_NUMBER, SPARKLE_FEED (the appcast URL), SPARKLE_KEY (the EdDSA public key).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="知处"
 APP_EXECUTABLE="Zhichu"
 # ".noindex" keeps Spotlight (and the Apps list) from showing this staging copy.
-APP="build.noindex/$APP_NAME.app"
+APP="${APP_OUTPUT:-build.noindex/$APP_NAME.app}"
+# Never invalidate a live process by replacing its signed files.
+python3 scripts/check-app-not-running.py "$APP"
 
 # Use full Xcode's toolchain when it's installed, even if xcode-select points at the Command Line Tools.
 if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app ]]; then
@@ -34,6 +36,7 @@ BIN_DIR="$(swift build -c release --show-bin-path)"
 # Assets.car), older macOS the .icns. Without the former, macOS 26 shows the icon shrunk inside a gray square.
 ICON="Resources/AppIcon.icns"
 
+python3 scripts/check-app-not-running.py "$APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 # The binary is DigUpApp in SwiftPM (it can't share a name with the `digup` CLI on a case-insensitive disk).
