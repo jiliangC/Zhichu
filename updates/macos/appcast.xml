@@ -1,0 +1,25 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>知处</title>
+        <item>
+            <title>0.1.12</title>
+            <pubDate>Mon, 26 Oct 2026 22:54:45 +0800</pubDate>
+            <link>https://github.com/jiliangC/Zhichu</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>0.1.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<h2>知处 0.1.12</h2>
+<ul><li>菜单“检查更新”去掉省略号。</li><li>接通知处更新服务：手动检查、每日自动检查、确认下载、签名校验、安装并重新启动。</li><li>更新列表与安装包使用独立 Ed25519 密钥签名，安装前校验应用代码签名。</li><li>设置显示上次检查时间；更新期间避免重复检查。</li></ul>
+<p>此版本使用 Developer ID 签名，尚未完成 Apple 公证，仍为公开预览版。</p>
+<p>0.1.11 及更早版本需从 Releases 手动安装一次本版本；此后可在应用内更新。</p>
+]]></description>
+            <enclosure url="https://github.com/jiliangC/Zhichu/releases/download/v0.1.12/Zhichu-0.1.12-macos-arm64.zip" length="15095261" type="application/octet-stream" sparkle:edSignature="SlMcdPWHGrk+mx+9knWhEUDbv9nH8X22WXQ8FSUqEXyxJspUsuMy4+l71bZ9PQEBJawJn/pVHfW5yDqaWaCjCQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: cKr1Pqgsn3Kjym6vBN8cPfD8hIbflkoNPOfj9Ca+wRRn/MS6TcmbgUHvJLOaHrPKvx6imYDYE8hZP/LpM93fDg==
+length: 1838
+-->
